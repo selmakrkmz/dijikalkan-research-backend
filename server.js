@@ -339,12 +339,29 @@ async function consultAIReviewEndpoints(query, sources) {
 }
 
 function parseAIEndpoints() {
-  if (!process.env.AI_REVIEW_ENDPOINTS) return [];
+  const endpoints = [];
+
+  if (process.env.OPENAI_API_KEY) {
+    const models = String(process.env.OPENAI_REVIEW_MODELS || process.env.OPENAI_REVIEW_MODEL || process.env.OPENAI_MODEL || "gpt-4o-mini")
+      .split(",")
+      .map((model) => model.trim())
+      .filter(Boolean);
+
+    models.forEach((model) => endpoints.push({
+      name: process.env.OPENAI_REVIEW_NAME || "OpenAI",
+      url: process.env.OPENAI_REVIEW_URL || "https://api.openai.com/v1/chat/completions",
+      apiKey: process.env.OPENAI_API_KEY,
+      model
+    }));
+  }
+
+  if (!process.env.AI_REVIEW_ENDPOINTS) return endpoints;
+
   try {
     const parsed = JSON.parse(process.env.AI_REVIEW_ENDPOINTS);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? endpoints.concat(parsed) : endpoints;
   } catch {
-    return [];
+    return endpoints;
   }
 }
 
@@ -362,22 +379,36 @@ async function askAIEndpoint(endpoint, query, sources) {
       messages: [
         {
           role: "system",
-          content: "Kısa Türkçe yanıt ver. Kesin hüküm verme; yalnızca manipülasyon işaretleri, kaynak tutarlılığı ve doğrulama ihtiyacını belirt."
+          content: [
+            "Türkçe yanıt ver.",
+            "Bir dijital içerik doğrulama danışmanı gibi davran.",
+            "Kesin hüküm verme; kaynak kanıtı, manipülasyon işaretleri ve doğrulama ihtiyacını ayır.",
+            "Yanıtı en fazla 4 kısa maddeyle ver.",
+            "Kişisel veri, banka, sağlık veya acil güvenlik iddialarında resmi kaynak kontrolünü özellikle vurgula."
+          ].join(" ")
         },
         {
           role: "user",
-          content: JSON.stringify({ claim: query, sources: sources.slice(0, 5) })
+          content: JSON.stringify({
+            claim: query,
+            availableSources: sources.slice(0, 5),
+            requestedOutput: {
+              manipulationSignals: "Varsa korku, aciliyet, sosyal kanıt, otorite iddiası gibi sinyaller",
+              sourceConsistency: "Kaynaklar iddiayı destekliyor mu, zayıf mı, alakasız mı",
+              userGuidance: "Kullanıcının bir sonraki doğrulama adımı"
+            }
+          })
         }
       ],
       temperature: 0.2,
-      max_tokens: 180
+      max_tokens: 260
     })
   });
 
   if (!response.ok) return null;
   const data = await response.json();
   const text = data.choices?.[0]?.message?.content || data.output_text || "";
-  return text ? `${endpoint.name || "Model"}: ${text}` : null;
+  return text ? `${endpoint.name || "Model"} (${endpoint.model}): ${text}` : null;
 }
 
 function buildSummaryText(sources) {
